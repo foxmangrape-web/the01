@@ -295,8 +295,9 @@ def clean_number(val):
 def parse_receipt_image(image_bytes):
     raw_text = ""
     lines = []
+    ocr_available = False
     
-    # 윈도우 내장 OCR 시도
+    # 1) Windows 환경인 경우 winocr 시도 (설치되어 있을 때만)
     try:
         import winocr
         img = Image.open(io.BytesIO(image_bytes))
@@ -311,10 +312,12 @@ def parse_receipt_image(image_bytes):
         lines = [line.get('text', '').strip() for line in result.get('lines', []) if line.get('text', '').strip()]
         if not lines and raw_text:
             lines = [l.strip() for l in raw_text.split('\n') if l.strip()]
-    except Exception as e:
-        raw_text = f"OCR 처리 중 안내: {e}"
+        if lines:
+            ocr_available = True
+    except Exception:
+        pass
 
-    # 파싱 기본값
+    # 기본값
     today_str = datetime.now().strftime('%Y-%m-%d')
     date_val = today_str
     title_val = "영수증 지출"
@@ -322,97 +325,100 @@ def parse_receipt_image(image_bytes):
     cat_val = "기타지출"
     method_val = "카드"
 
-    # 1. 날짜 탐지
-    date_pats = [
-        r'(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})',
-        r'(\d{2})[-/.](\d{1,2})[-/.](\d{1,2})',
-        r'(20\d{2})년\s*(\d{1,2})월\s*(\d{1,2})일',
-        r'(\d{1,2})월\s*(\d{1,2})일'
-    ]
-    for line in lines:
-        matched = False
-        for p in date_pats:
-            m = re.search(p, line)
-            if m:
-                g = m.groups()
-                if len(g) == 3:
-                    y, mo, d = g
-                    if len(y) == 2:
-                        y = f"20{y}"
-                    date_val = f"{int(y):04d}-{int(mo):02d}-{int(d):02d}"
-                    matched = True
-                    break
-                elif len(g) == 2:
-                    mo, d = g
-                    date_val = f"{datetime.now().year:04d}-{int(mo):02d}-{int(d):02d}"
-                    matched = True
-                    break
-        if matched:
-            break
-
-    # 2. 금액 탐지
-    kws = ['합계', '합 계', '총액', '결제금액', '승인금액', '받을금액', '합계금액', 'TOTAL', '이용금액']
-    candidates = []
-    for i, line in enumerate(lines):
-        clean_l = line.replace(' ', '')
-        for kw in kws:
-            if kw.replace(' ', '') in clean_l:
-                m = re.findall(r'(\d{1,3}(?:,\d{3})+|\d+)\s*(?:원)?', line)
+    if lines:
+        # 1. 날짜 탐지
+        date_pats = [
+            r'(20\d{2})[-/.](\d{1,2})[-/.](\d{1,2})',
+            r'(\d{2})[-/.](\d{1,2})[-/.](\d{1,2})',
+            r'(20\d{2})년\s*(\d{1,2})월\s*(\d{1,2})일',
+            r'(\d{1,2})월\s*(\d{1,2})일'
+        ]
+        for line in lines:
+            matched = False
+            for p in date_pats:
+                m = re.search(p, line)
                 if m:
-                    for s in m:
-                        v = int(s.replace(',', ''))
-                        if v > 0:
-                            candidates.append((10, v))
-                elif i + 1 < len(lines):
-                    next_l = lines[i+1]
-                    m_next = re.findall(r'(\d{1,3}(?:,\d{3})+|\d+)\s*(?:원)?', next_l)
-                    for s in m_next:
-                        v = int(s.replace(',', ''))
-                        if v > 0:
-                            candidates.append((8, v))
-
-    for line in lines:
-        if re.search(r'0\d{1,2}-\d{3,4}-\d{4}', line) or re.search(r'\d{3}-\d{2}-\d{5}', line):
-            continue
-        m = re.findall(r'(\d{1,3}(?:,\d{3})+)\s*(?:원)?', line)
-        for s in m:
-            v = int(s.replace(',', ''))
-            if 100 <= v <= 20000000:
-                candidates.append((5, v))
-
-    if candidates:
-        candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
-        amount_val = candidates[0][1]
-
-    # 3. 상호명 탐지
-    for line in lines[:8]:
-        m = re.search(r'(?:상호|가맹점|매장명|상호명)[:\s]+([^\s\d]+[^\n]*)', line)
-        if m:
-            title_val = m.group(1).strip()
-            break
-            
-    if title_val == "영수증 지출":
-        ignore_words = ['영수증', '신용카드', '매출전표', '승인', '고객용', '카드사', '사업자', '전화', 'TEL', '주소', '일시']
-        for line in lines[:6]:
-            if any(w in line for w in ignore_words):
-                continue
-            cleaned = re.sub(r'[\d\-.,:()\[\]]', '', line).strip()
-            if len(cleaned) >= 2:
-                title_val = line.strip()
+                    g = m.groups()
+                    if len(g) == 3:
+                        y, mo, d = g
+                        if len(y) == 2:
+                            y = f"20{y}"
+                        date_val = f"{int(y):04d}-{int(mo):02d}-{int(d):02d}"
+                        matched = True
+                        break
+                    elif len(g) == 2:
+                        mo, d = g
+                        date_val = f"{datetime.now().year:04d}-{int(mo):02d}-{int(d):02d}"
+                        matched = True
+                        break
+            if matched:
                 break
 
-    # 4. 결제 수단 및 카테고리
-    all_str = " ".join(lines)
-    if any(k in all_str for k in ['현금영수증', '현금']):
-        method_val = '현금'
-    elif any(k in all_str for k in ['카카오페이', '네이버페이', '토스', '페이코']):
-        method_val = '간편결제'
-    elif any(k in all_str for k in ['계좌이체', '송금']):
-        method_val = '계좌이체'
-    else:
-        method_val = '카드'
+        # 2. 금액 탐지
+        kws = ['합계', '합 계', '총액', '결제금액', '승인금액', '받을금액', '합계금액', 'TOTAL', '이용금액']
+        candidates = []
+        for i, line in enumerate(lines):
+            clean_l = line.replace(' ', '')
+            for kw in kws:
+                if kw.replace(' ', '') in clean_l:
+                    m = re.findall(r'(\d{1,3}(?:,\d{3})+|\d+)\s*(?:원)?', line)
+                    if m:
+                        for s in m:
+                            v = int(s.replace(',', ''))
+                            if v > 0:
+                                candidates.append((10, v))
+                    elif i + 1 < len(lines):
+                        next_l = lines[i+1]
+                        m_next = re.findall(r'(\d{1,3}(?:,\d{3})+|\d+)\s*(?:원)?', next_l)
+                        for s in m_next:
+                            v = int(s.replace(',', ''))
+                            if v > 0:
+                                candidates.append((8, v))
 
-    cat_val = guess_category(f"{title_val} {all_str}")
+        for line in lines:
+            if re.search(r'0\d{1,2}-\d{3,4}-\d{4}', line) or re.search(r'\d{3}-\d{2}-\d{5}', line):
+                continue
+            m = re.findall(r'(\d{1,3}(?:,\d{3})+)\s*(?:원)?', line)
+            for s in m:
+                v = int(s.replace(',', ''))
+                if 100 <= v <= 20000000:
+                    candidates.append((5, v))
+
+        if candidates:
+            candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+            amount_val = candidates[0][1]
+
+        # 3. 상호명 탐지
+        for line in lines[:8]:
+            m = re.search(r'(?:상호|가맹점|매장명|상호명)[:\s]+([^\s\d]+[^\n]*)', line)
+            if m:
+                title_val = m.group(1).strip()
+                break
+                
+        if title_val == "영수증 지출":
+            ignore_words = ['영수증', '신용카드', '매출전표', '승인', '고객용', '카드사', '사업자', '전화', 'TEL', '주소', '일시']
+            for line in lines[:6]:
+                if any(w in line for w in ignore_words):
+                    continue
+                cleaned = re.sub(r'[\d\-.,:()\[\]]', '', line).strip()
+                if len(cleaned) >= 2:
+                    title_val = line.strip()
+                    break
+
+        # 4. 결제 수단 및 카테고리
+        all_str = " ".join(lines)
+        if any(k in all_str for k in ['현금영수증', '현금']):
+            method_val = '현금'
+        elif any(k in all_str for k in ['카카오페이', '네이버페이', '토스', '페이코']):
+            method_val = '간편결제'
+        elif any(k in all_str for k in ['계좌이체', '송금']):
+            method_val = '계좌이체'
+        else:
+            method_val = '카드'
+
+        cat_val = guess_category(f"{title_val} {all_str}")
+    else:
+        raw_text = "서버 환경에서 자동 텍스트 추출이 지원되지 않거나 이미지에서 텍스트를 찾지 못했습니다. 아래 폼에서 직접 입력하실 수 있습니다."
 
     return {
         '날짜': date_val,
@@ -421,9 +427,10 @@ def parse_receipt_image(image_bytes):
         '항목명': title_val,
         '금액': amount_val,
         '결제수단': method_val,
-        '메모': '영수증 OCR 추출',
+        '메모': '영수증 등록',
         '출처': '영수증',
-        'raw_text': raw_text
+        'raw_text': raw_text,
+        'ocr_success': ocr_available
     }
 
 # ----------------------------------------------------

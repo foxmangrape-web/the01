@@ -3,5 +3,3 @@ pandas
 openpyxl
 requests
 Pillow
-winocr
-
