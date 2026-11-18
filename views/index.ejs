@@ -1,0 +1,52 @@
+<!-- include header -->
+<%- include('./include/_header') %>
+<!-- /include header -->
+
+  <!-- Main -->
+  <main id="site-main">
+    <div class="button-box">
+      <h2>연락처 목록</h2>
+      <a href="/contacts/add" class="btn btn-primary">+ 연락처 추가</a>
+    </div>
+  
+    <div class="table-container">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>이름</th>
+            <th>메일 주소</th>
+            <th>전화번호</th>
+            <th style="width: 140px; text-align: center;">관리</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% if (contacts && contacts.length > 0) { %>
+            <% contacts.forEach(contact => { %>
+            <tr>
+              <td style="font-weight: 600;"><%= contact.name %></td>
+              <td><%= contact.email %></td>
+              <td><%= contact.phone %></td>
+              <td style="text-align: center;">
+                <a href="/contacts/<%= contact._id %>" class="btn btn-sm btn-edit" title="수정">수정</a>
+                <form action="/contacts/<%= contact._id %>?_method=DELETE" method="POST" style="display:inline">
+                  <button type="submit" class="btn btn-sm btn-delete" title="삭제" onclick="return confirm('정말 삭제하시겠습니까?');">삭제</button> 
+                </form>          
+              </td>
+            </tr>
+            <% }); %> 
+          <% } else { %>
+            <tr>
+              <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 40px;">
+                등록된 연락처가 없습니다.
+              </td>
+            </tr>
+          <% } %>
+        </tbody>
+      </table>
+    </div>
+  </main>
+  <!-- /Main -->
+
+<!-- include footer -->
+<%- include('./include/_footer') %>
+<!-- /include footer -->
